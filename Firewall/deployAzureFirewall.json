@@ -1,0 +1,223 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "type": "string",
+            "defaultValue": "[resourceGroup().location]",
+            "metadata": {
+                "description": "Deployment location"
+            }
+        },
+        "sigOverrideParam1": {
+            "type": "string",
+            "metadata": {
+                "description": "Intruder Detection - Signature Overrodes Id 1"
+            },
+            "defaultValue": "2024897"
+        },
+        "sigOverrideParam2": {
+            "type": "string",
+            "metadata": {
+                "description": "Intruder Detection - Signature Overrodes Id 2"
+            },
+            "defaultValue": "2024898"
+        }
+    },
+    "variables": {       
+        "keyVaultName": "kv-azsecretstore-dev01",
+        "keyVaultCASecretName": "CACert"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Network/publicIpAddresses",
+            "apiVersion": "2020-07-01",
+            "name": "FirewallPublicIP",
+            "location": "[parameters('location')]",
+            "sku": {
+                "name": "Standard"
+            },
+            "properties": {
+                "publicIPAllocationMethod": "Static"
+            }
+        },
+        {
+            "type": "Microsoft.Network/firewallPolicies",
+            "apiVersion": "2020-07-01",
+            "name": "BaseFirewallPolicy",
+            "location": "[parameters('location')]",
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'FirewallIdentity')]": {}
+                }
+            },
+            "dependsOn": [
+                //"[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), variables('keyVaultCASecretName'))]",
+                //"[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'FirewallIdentity')]"
+            ],
+            "properties": {
+                "sku": {
+                    "tier": "Premium"
+                },
+                "transportSecurity": {
+                    "certificateAuthority": {
+                        "name": "[variables('keyVaultCASecretName')]",
+                        "keyVaultSecretId": "[concat(reference(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), '2019-09-01').vaultUri, 'secrets/', variables('keyVaultCASecretName'), '/')]"
+                    }
+                },
+                "intrusionDetection": {
+                    "mode": "Alert",
+                    "configuration": {
+                        "signatureOverrides": [
+                            {
+                                "id": "[parameters('sigOverrideParam1')]",
+                                "mode": "Deny"
+                            },
+                            {
+                                "id": "[parameters('sigOverrideParam2')]",
+                                "mode": "Alert"
+                            }
+                        ],
+                        "bypassTrafficSettings": [
+                            {
+                                "name": "SecretBypass",
+                                "protocol": "TCP",
+                                "sourceAddresses": [
+                                    "*"
+                                ],
+                                "destinationAddresses": [
+                                    "1.1.1.1"
+                                ],
+                                "destinationPorts": [
+                                    "80"
+                                ]
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Network/firewallPolicies/ruleCollectionGroups",
+            "apiVersion": "2020-07-01",
+            "name": "BaseFirewallPolicy/PolicyRules",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/firewallPolicies', 'BaseFirewallPolicy')]"
+            ],
+            "properties": {
+                "priority": 200,
+                "ruleCollections": [
+                    {
+                        "name": "AllowWeb",
+                        "priority": 101,
+                        "ruleCollectionType": "FirewallPolicyFilterRuleCollection",
+                        "action": {
+                            "type": "Allow"
+                        },
+                        "rules": [
+                            {
+                                "ruleType": "ApplicationRule",
+                                "name": "AllowAzure",
+                                "protocols": [
+                                    {
+                                        "protocolType": "Https",
+                                        "port": 443
+                                    }
+                                ],
+                                "targetFqdns": [
+                                    "*azure.com",
+                                    "*microsoft.com"
+                                ],
+                                "sourceAddresses": [
+                                    "*"
+                                ],
+                                "terminateTLS": true
+                            },
+                            {
+                                "ruleType": "ApplicationRule",
+                                "name": "AllowNews",
+                                "protocols": [
+                                    {
+                                        "protocolType": "Https",
+                                        "port": 443
+                                    }
+                                ],
+                                "webCategories": [
+                                    "business",
+                                    "webbasedemail"
+                                ],
+                                "sourceAddresses": [
+                                    "*"
+                                ],
+                                "terminateTLS": true
+                            }
+                        ]
+                    },
+                    {
+                        "name": "BlockPage",
+                        "priority": 100,
+                        "ruleCollectionType": "FirewallPolicyFilterRuleCollection",
+                        "action": {
+                            "type": "Deny"
+                        },
+                        "rules": [
+                            {
+                                "ruleType": "ApplicationRule",
+                                "name": "BlockAzureEvents",
+                                "protocols": [
+                                    {
+                                        "protocolType": "Https",
+                                        "port": 443
+                                    }
+                                ],
+                                "targetUrls": [
+                                    "azure.microsoft.com/en-us/community/events",
+                                    "azure.microsoft.com/en-us/community/events/*"
+                                ],
+                                "sourceAddresses": [
+                                    "*"
+                                ],
+                                "terminateTLS": true
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "type": "Microsoft.Network/azureFirewalls",
+            "apiVersion": "2020-07-01",
+            "name": "AKSFirewall",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIpAddresses', 'FirewallPublicIP')]",
+                "[resourceId('Microsoft.Network/firewallPolicies', 'BaseFirewallPolicy')]",
+                "[resourceId('Microsoft.Network/firewallPolicies/ruleCollectionGroups', 'BaseFirewallPolicy', 'PolicyRules')]"
+            ],
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "FirewallIPConfiguration",
+                        "properties": {
+                            "subnet": {
+                                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'BaseVnet', 'AzureFirewallSubnet')]"
+                            },
+                            "publicIPAddress": {
+                                "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'FirewallPublicIP')]"
+                            }
+                        }
+                    }
+                ],
+                "firewallPolicy": {
+                    "id": "[resourceId('Microsoft.Network/firewallPolicies', 'BaseFirewallPolicy')]"
+                },
+                "sku": {
+                    "name": "AZFW_VNet",
+                    "tier": "Premium"
+                }
+            }
+        }
+    ]
+}
