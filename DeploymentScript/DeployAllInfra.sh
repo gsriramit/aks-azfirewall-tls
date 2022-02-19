@@ -4,11 +4,11 @@
 RG_LOCATION='eastus2'
 RG_NAME='rg-aksegressfirewalltest-dev0001'
 AZKEYVAULT_NAME='kv-azsecretstore-dev01'
-export SUBSCRIPTION_ID="695471ea-1fc3-42ee-a854-eab6c3009516"
+export SUBSCRIPTION_ID=""
 CLUSTER_NAME="aksworkload-dev-01"
 export IDENTITY_NAME="podidentity-test"
 export KEYVAULT_NAME="kv-aks-secretstore"
-export TENANT_ID="d787514b-d3f2-45ff-9bf1-971fb473fc85"
+export TENANT_ID=""
 
 az login
 az account set -s "${SUBSCRIPTION_ID}"
