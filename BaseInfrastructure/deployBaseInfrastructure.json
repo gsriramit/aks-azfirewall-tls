@@ -11,16 +11,23 @@
         }       
     },
     "variables": {
-        "vnetAddressSpace": "172.16.0.0/16",
-        "firewallAddressSpace": "172.16.10.0/26",
-        "firewallPrivateIPAddress": "172.16.10.4",
-        "keyVaultName": "kv-azsecretstore-dev01"
+        "vnetAddressSpace": "10.42.0.0/16",
+        "firewallAddressSpace": "10.42.2.0/24",
+        "firewallPrivateIPAddress": "10.42.2.4",
+        "aksSubnetAddressSpace":"10.42.1.0/24",
+        "keyVaultName": "kv-azsecretstore-dev01",
+        "vnetName":"aks-egress-vnet",
+        "aksSubnetName":"aks-subnet",
+        "firewallSubnetName":"AzureFirewallSubnet",
+        "aksEgressRouteTableName":"aks-egress-fwrt",
+        "aksEgressRouteName":"aks-egress-fwrn",
+        "firewallIdentityName":"FirewallIdentity"
     },
     "resources": [
         {
             "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
             "apiVersion": "2018-11-30",
-            "name": "FirewallIdentity",
+            "name": "[variables('firewallIdentityName')]",
             "location": "[parameters('location')]"
         },
         {
@@ -57,12 +64,12 @@
         {
             "type": "Microsoft.Network/routeTables",
             "apiVersion": "2020-05-01",
-            "name": "WorkerRoute",
+            "name": "[variables('aksEgressRouteTableName')]",
             "location": "[parameters('location')]",
             "properties": {
                 "routes": [
                     {
-                        "name": "WorkerRouteFirewall",
+                        "name": "[variables('aksEgressRouteName')]",
                         "properties": {
                             "addressPrefix": "0.0.0.0/0",
                             "nextHopType": "VirtualAppliance",
@@ -76,10 +83,10 @@
         {
             "type": "Microsoft.Network/virtualNetworks",
             "apiVersion": "2020-07-01",
-            "name": "BaseVnet",
+            "name": "[variables('vnetName')]",
             "location": "[parameters('location')]",
             "dependsOn": [
-                "[resourceId('Microsoft.Network/routeTables', 'WorkerRoute')]"
+                "[resourceId('Microsoft.Network/routeTables', variables('aksEgressRouteTableName'))]"
             ],
             "properties": {
                 "addressSpace": {
@@ -89,16 +96,16 @@
                 },
                 "subnets": [
                     {
-                        "name": "WorkerSubnet",
+                        "name": "[variables('aksSubnetName')]",
                         "properties": {
-                            "addressPrefix": "[variables('workerAddressSpace')]",
+                            "addressPrefix": "[variables('aksSubnetAddressSpace')]",
                             "routeTable": {
-                                "id": "[resourceId('Microsoft.Network/routeTables', 'WorkerRoute')]"
+                                "id": "[resourceId('Microsoft.Network/routeTables', variables('aksEgressRouteTableName'))]"
                             }
                         }
                     },                   
                     {
-                        "name": "AzureFirewallSubnet",
+                        "name": "[variables('firewallSubnetName')]",
                         "properties": {
                             "addressPrefix": "[variables('firewallAddressSpace')]"
                         }

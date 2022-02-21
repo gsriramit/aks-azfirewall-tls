@@ -24,7 +24,7 @@
             "defaultValue": "2024898"
         }
     },
-    "variables": {       
+    "variables": {
         "keyVaultName": "kv-azsecretstore-dev01",
         "keyVaultCASecretName": "CACert"
     },
@@ -59,6 +59,9 @@
             "properties": {
                 "sku": {
                     "tier": "Premium"
+                },
+                "dnsSettings": {
+                    "enableProxy": "true"
                 },
                 "transportSecurity": {
                     "certificateAuthority": {
@@ -100,18 +103,91 @@
         },
         {
             "type": "Microsoft.Network/firewallPolicies/ruleCollectionGroups",
-            "apiVersion": "2020-07-01",
-            "name": "BaseFirewallPolicy/PolicyRules",
+            "apiVersion": "2020-05-01",
+            "name": "BaseFirewallPolicy/NetworkRuleCollectionGroup",
             "location": "[parameters('location')]",
             "dependsOn": [
                 "[resourceId('Microsoft.Network/firewallPolicies', 'BaseFirewallPolicy')]"
+            ],
+            "properties": {
+                "priority": 100,
+                "ruleCollections": [
+                    {
+                        "ruleCollectionType": "FirewallPolicyFilterRuleCollection",
+                        "action": {
+                            "type": "Allow"
+                        },
+                        "name": "aksfw-nrc",
+                        "priority": 100,
+                        "rules": [
+                            {
+                                "ruleType": "NetworkRule",
+                                "name": "apiudp",
+                                "ipProtocols": [
+                                    "UDP"
+                                ],
+                                "destinationAddresses": [
+                                    "[concat('AzureCloud.',parameters('location'))]"
+                                ],
+                                "sourceAddresses": [
+                                    "*"
+                                ],
+                                "destinationPorts": [
+                                    "1194"
+                                ]
+                            },
+                            {
+                                "ruleType": "NetworkRule",
+                                "name": "apitcp",
+                                "ipProtocols": [
+                                    "TCP"
+                                ],
+                                "destinationAddresses": [
+                                    "[concat('AzureCloud.',parameters('location'))]"
+                                ],
+                                "sourceAddresses": [
+                                    "*"
+                                ],
+                                "destinationPorts": [
+                                    "9000"
+                                ]
+                            },
+                            {
+                                "ruleType": "NetworkRule",
+                                "name": "time",
+                                "ipProtocols": [
+                                    "UDP"
+                                ],
+                                "destinationFqdns": [
+                                    "ntp.ubuntu.com"
+                                ],
+                                "sourceAddresses": [
+                                    "*"
+                                ],
+                                "destinationPorts": [
+                                    "123"
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "type": "Microsoft.Network/firewallPolicies/ruleCollectionGroups",
+            "apiVersion": "2020-07-01",
+            "name": "BaseFirewallPolicy/ApplicationRuleCollectionGroup",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/firewallPolicies', 'BaseFirewallPolicy')]",
+                "[resourceId('Microsoft.Network/firewallPolicies/ruleCollectionGroups', 'BaseFirewallPolicy','NetworkRuleCollectionGroup')]"
             ],
             "properties": {
                 "priority": 200,
                 "ruleCollections": [
                     {
                         "name": "AllowWeb",
-                        "priority": 101,
+                        "priority": 100,
                         "ruleCollectionType": "FirewallPolicyFilterRuleCollection",
                         "action": {
                             "type": "Allow"
@@ -119,67 +195,43 @@
                         "rules": [
                             {
                                 "ruleType": "ApplicationRule",
-                                "name": "AllowAzure",
+                                "name": "AllowAll",
                                 "protocols": [
                                     {
                                         "protocolType": "Https",
                                         "port": 443
+                                    },
+                                    {
+                                        "protocolType": "Http",
+                                        "port": 80
                                     }
                                 ],
                                 "targetFqdns": [
-                                    "*azure.com",
-                                    "*microsoft.com"
+                                    "*"
                                 ],
                                 "sourceAddresses": [
                                     "*"
                                 ],
-                                "terminateTLS": true
+                                "terminateTLS": false
                             },
                             {
                                 "ruleType": "ApplicationRule",
-                                "name": "AllowNews",
+                                "name": "AllowAzureKubernetesServicesFqdn",
                                 "protocols": [
                                     {
                                         "protocolType": "Https",
                                         "port": 443
-                                    }
-                                ],
-                                "webCategories": [
-                                    "business",
-                                    "webbasedemail"
-                                ],
-                                "sourceAddresses": [
-                                    "*"
-                                ],
-                                "terminateTLS": true
-                            }
-                        ]
-                    },
-                    {
-                        "name": "BlockPage",
-                        "priority": 100,
-                        "ruleCollectionType": "FirewallPolicyFilterRuleCollection",
-                        "action": {
-                            "type": "Deny"
-                        },
-                        "rules": [
-                            {
-                                "ruleType": "ApplicationRule",
-                                "name": "BlockAzureEvents",
-                                "protocols": [
+                                    },
                                     {
-                                        "protocolType": "Https",
-                                        "port": 443
+                                        "protocolType": "Http",
+                                        "port": 80
                                     }
                                 ],
-                                "targetUrls": [
-                                    "azure.microsoft.com/en-us/community/events",
-                                    "azure.microsoft.com/en-us/community/events/*"
-                                ],
+                                "fqdnTags": [ "AzureKubernetesService" ],
                                 "sourceAddresses": [
                                     "*"
                                 ],
-                                "terminateTLS": true
+                                "terminateTLS": false
                             }
                         ]
                     }
@@ -194,7 +246,8 @@
             "dependsOn": [
                 "[resourceId('Microsoft.Network/publicIpAddresses', 'FirewallPublicIP')]",
                 "[resourceId('Microsoft.Network/firewallPolicies', 'BaseFirewallPolicy')]",
-                "[resourceId('Microsoft.Network/firewallPolicies/ruleCollectionGroups', 'BaseFirewallPolicy', 'PolicyRules')]"
+                "[resourceId('Microsoft.Network/firewallPolicies/ruleCollectionGroups', 'BaseFirewallPolicy','NetworkRuleCollectionGroup')]",
+                "[resourceId('Microsoft.Network/firewallPolicies/ruleCollectionGroups', 'BaseFirewallPolicy','ApplicationRuleCollectionGroup')]"
             ],
             "properties": {
                 "ipConfigurations": [
@@ -202,7 +255,7 @@
                         "name": "FirewallIPConfiguration",
                         "properties": {
                             "subnet": {
-                                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'BaseVnet', 'AzureFirewallSubnet')]"
+                                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'aks-egress-vnet', 'AzureFirewallSubnet')]"
                             },
                             "publicIPAddress": {
                                 "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'FirewallPublicIP')]"

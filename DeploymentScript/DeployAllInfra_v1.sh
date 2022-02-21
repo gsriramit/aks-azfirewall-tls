@@ -4,17 +4,11 @@
 RG_LOCATION='eastus2'
 RG_NAME='rg-aksegressfirewalltest-dev0001'
 AZKEYVAULT_NAME='kv-azsecretstore-dev01'
-export SUBSCRIPTION_ID=""
+export SUBSCRIPTION_ID="695471ea-1fc3-42ee-a854-eab6c3009516"
 CLUSTER_NAME="aksworkload-dev-01"
-export IDENTITY_NAME="podidentity"
+export IDENTITY_NAME="podidentity-test"
 export KEYVAULT_NAME="kv-aks-secretstore"
-export TENANT_ID=""
-FWPUBLICIP_NAME="FirewallPublicIP"
-FWNAME="AKSFirewall"
-FWROUTE_NAME_INTERNET="aks-egress-fwinternet"
-FWROUTE_TABLE_NAME="aks-egress-fwrt"
-VNET_NAME="aks-egress-vnet"
-PLUGIN="azure"
+export TENANT_ID="d787514b-d3f2-45ff-9bf1-971fb473fc85"
 
 az login
 az account set -s "${SUBSCRIPTION_ID}"
@@ -66,20 +60,8 @@ az keyvault certificate import --vault-name $AZKEYVAULT_NAME -f rootCA.pem --nam
 # Deploy the Firewall that provides the egress security through TLS inspection
 az deployment group create -g $RG_NAME -f Firewall/deployAzureFirewall.json -p Firewall/deployAzureFirewall.parameters.json
 
-# Get the Public and Private IPs of the Firewall
-FWPUBLIC_IP=$(az network public-ip show -g $RG_NAME -n $FWPUBLICIP_NAME --query "ipAddress" -o tsv)
-FWPRIVATE_IP=$(az network firewall show -g $RG_NAME -n $FWNAME --query "ipConfigurations[0].privateIpAddress" -o tsv)
-
-# Add the additional route that is a requisite of asymmetric routing soln
-az network route-table route create -g $RG_NAME --name $FWROUTE_NAME_INTERNET --route-table-name $FWROUTE_TABLE_NAME --address-prefix $FWPUBLIC_IP/32 --next-hop-type Internet
-
-# Map the route table to the cluster node subnet (aks-subnet)
-ROUTE_TABLE_ID=$(az network route-table show -g $RG_NAME -n $FWROUTE_TABLE_NAME --query id -o tsv)
-az network vnet subnet update -n 'aks-subnet' --vnet-name $VNET_NAME -g $RG_NAME --route-table $ROUTE_TABLE_ID
-
-
 # Deploy the AKS resource that will host the workload pods
-SUBNETID=$(az network vnet subnet show -g $RG_NAME --vnet-name $VNET_NAME --name 'aks-subnet' --query id -o tsv)
+aksworkload_subnet_id=/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG_NAME/providers/Microsoft.Network/virtualNetworks/BaseVnet/subnets/WorkerSubnet
 # Create an RBAC enabled AKS cluster and deploy it to the preexisting virtual network subnet
 # Service (ClusterIP) CIDR and the DNS Service IP need to be explicitly provided to the command to avoid the defaults of 10.0.0.0/16 & 10.0.0.10
 # Deployment to an existing subnet also provides the option of bringing our own Identities for the Control-Plane and Kubelet (suggested)
@@ -87,38 +69,23 @@ SUBNETID=$(az network vnet subnet show -g $RG_NAME --vnet-name $VNET_NAME --name
 # Reference: https://docs.microsoft.com/en-us/azure/aks/use-managed-identity#create-a-cluster-using-kubelet-identity 
 # az aks create -g $RG_NAME -n $CLUSTER_NAME --vnet-subnet-id $aksworkload_subnet_id --enable-aad --enable-azure-rbac --network-plugin azure --node-count 1 --enable-addons monitoring --enable-managed-identity --service-cidr 10.0.10.0/23 --dns-service-ip 10.0.10.10
 
-# Create the AKS cluster
-# OutboundType should be defined and strictly be UserDefinedRouting 
-# As we are deploying to an existing subnet (this is a prerequisite for UDR outbound), the subnetId needs to be mentioned
-az aks create -g $RG_NAME -n $CLUSTER_NAME -l $RG_LOCATION \
-  --node-count 2 --generate-ssh-keys \
-  --network-plugin $PLUGIN \
-  --outbound-type userDefinedRouting \
-  --service-cidr 10.41.0.0/16 \
-  --dns-service-ip 10.41.0.10 \
-  --docker-bridge-address 172.17.0.1/16 \
-  --vnet-subnet-id $SUBNETID \
-  --enable-managed-identity \
-  --api-server-authorized-ip-ranges $FWPUBLIC_IP \
-  --enable-aad  \
-  --enable-azure-rbac \
-  --enable-addons monitoring
-
-# Retrieve your IP address
-CURRENT_IP=$(dig @resolver1.opendns.com ANY myip.opendns.com +short)
-# Add to AKS approved list
-az aks update -g $RG -n $CLUSTER_NAME --api-server-authorized-ip-ranges $CURRENT_IP/32
-
-
-#############################################
-# AAD-Pod_Identity & SecretsStoreCSIDriver Section
-#############################################
-
+az aks create -g $RG_NAME -n $CLUSTER_NAME --enable-aad --enable-azure-rbac --network-plugin azure --node-count 1 --enable-addons monitoring
 
 # for this demo, we will be deploying a user-assigned identity to the AKS node resource group
 export IDENTITY_RESOURCE_GROUP="$(az aks show -g ${RG_NAME} -n ${CLUSTER_NAME} --query nodeResourceGroup -otsv)"
 
 BASE_VNET_ID=$(az network vnet show -g $RG_NAME -n BaseVnet --query id -o tsv)
+AKS_CLUSTER_VNET_ID=$(az network vnet show -g $IDENTITY_RESOURCE_GROUP -n aks-vnet-19833102 --query id -o tsv)
+
+# Create the Vnet Peering between the AKS deployed Vnet & the Hub/Base Vnet
+az network vnet peering create -g $IDENTITY_RESOURCE_GROUP -n 'AksClusterToHubVnet' --vnet-name 'aks-vnet-19833102' --remote-vnet $BASE_VNET_ID --allow-vnet-access
+# Create the Peering between the BaseVnet and the Cluster Vnet
+az network vnet peering create -g $RG_NAME -n 'HubToAksClusterVnet' --vnet-name 'BaseVnet' --remote-vnet $AKS_CLUSTER_VNET_ID --allow-vnet-access
+
+# Map the route table to the cluster node subnet (aks-subnet)
+# ToDo- Get the subnet and the vnet name dynamically
+ROUTE_TABLE_ID=$(az network route-table show -g $RG_NAME -n WorkerRoute --query id -o tsv)
+az network vnet subnet update -n 'aks-subnet' --vnet-name 'aks-vnet-19833102' -g $IDENTITY_RESOURCE_GROUP --route-table $ROUTE_TABLE_ID
 
 # get the client-Id of the managed identity assigned to the node pool
 AGENTPOOL_IDENTITY_CLIENTID=$(az aks show -g $RG_NAME -n $CLUSTER_NAME --query identityProfile.kubeletidentity.clientId -o tsv)
