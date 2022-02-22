@@ -107,7 +107,7 @@ az aks create -g $RG_NAME -n $CLUSTER_NAME -l $RG_LOCATION \
 # Retrieve your IP address
 CURRENT_IP=$(dig @resolver1.opendns.com ANY myip.opendns.com +short)
 # Add to AKS approved list
-az aks update -g $RG -n $CLUSTER_NAME --api-server-authorized-ip-ranges $CURRENT_IP/32
+az aks update -g $RG_NAME -n $CLUSTER_NAME --api-server-authorized-ip-ranges $CURRENT_IP/32
 
 
 #############################################
@@ -128,7 +128,7 @@ AGENTPOOL_IDENTITY_CLIENTID=$(az aks show -g $RG_NAME -n $CLUSTER_NAME --query i
 # ""before deploying AAD Pod Identity"" so that it can assign and un-assign identities from the underlying VM/VMSS.
 az role assignment create --role "Managed Identity Operator" --assignee $AGENTPOOL_IDENTITY_CLIENTID --scope /subscriptions/${SUBSCRIPTION_ID}/resourcegroups/${IDENTITY_RESOURCE_GROUP}
 az role assignment create --role "Virtual Machine Contributor" --assignee $AGENTPOOL_IDENTITY_CLIENTID --scope /subscriptions/${SUBSCRIPTION_ID}/resourcegroups/${IDENTITY_RESOURCE_GROUP}
-
+az role assignment create --role "AcrPull" --assignee $AGENTPOOL_IDENTITY_CLIENTID --scope /subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RG_NAME}/providers/Microsoft.ContainerRegistry/registries/$MYACR
 # get the cluster access credentials before executing the K8s API commands
 # Note: the --admin switch is optional and not adviced for production setups
 az aks get-credentials -n $CLUSTER_NAME -g $RG_NAME --admin
@@ -201,6 +201,26 @@ spec:
           objectVersion: ""         # [OPTIONAL] object versions, default to latest if empty
     tenantId: $TENANT_ID                # the tenant ID of the KeyVault
 EOF
+
+# set this to the name of your Azure Container Registry.  It must be globally unique
+MYACR=workloadContainerRegistry
+
+# Run the following line to create an Azure Container Registry if you do not already have one
+az acr create -n $MYACR -g $RG_NAME --sku basic
+
+REGISTRYID=$(az acr show --name workloadcontainerregistry -g $RG_NAME --query id -o tsv)
+
+# Create an AKS cluster with ACR integration
+az aks update -n $CLUSTER_NAME -g $RG_NAME --attach-acr $MYACR
+
+# login to the azure account to access the ACR
+az acr login --name $MYACR
+
+# tag the prebuilt image from Microsoft MCR
+docker tag mcr.microsoft.com/dotnet/samples workloadcontainerregistry.azurecr.io/dotnetconsoleapp:v1
+# push the container image to ACR
+docker push workloadcontainerregistry.azurecr.io/dotnetconsoleapp:v1
+
 
 
 #spotify/alpine - if you prefer alpine as the base image, then this image contains bash and curl built on top of alpine
