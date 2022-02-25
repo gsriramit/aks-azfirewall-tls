@@ -41,7 +41,11 @@ openssl req -new -nodes -newkey rsa:4096 -keyout interCA.key -sha256 -out interC
 openssl x509 -req -in interCA.csr -CA rootCA.crt -CAkey rootCA.key -CAcreateserial -out interCA.crt -days 1024 -sha256 -extfile openssl.cnf -extensions interCA_ext
 
 # Export the intermediate CA into PFX
-openssl pkcs12 -export -out interCA.pfx -inkey interCA.key -in interCA.crt -password "pass:"
+# format of the password should be "pass:<>". The part after the : delimeter has been left blank in the MS documentation for you to feed in
+# References:
+# https://www.openssl.org/docs/manmaster/man1/openssl-pkcs12.html
+# https://www.ibm.com/docs/en/spectrum-conductor/2.3.0?topic=groups-setting-up-ssl-tier-3-notebooks
+openssl pkcs12 -export -out interCA.pfx -inkey interCA.key -in interCA.crt -passout "pass:azfwintercapwd"
 #pass-fw-akstls-02:
 
 echo ""
@@ -87,6 +91,16 @@ SUBNETID=$(az network vnet subnet show -g $RG_NAME --vnet-name $VNET_NAME --name
 # Reference: https://docs.microsoft.com/en-us/azure/aks/use-managed-identity#create-a-cluster-using-kubelet-identity 
 # az aks create -g $RG_NAME -n $CLUSTER_NAME --vnet-subnet-id $aksworkload_subnet_id --enable-aad --enable-azure-rbac --network-plugin azure --node-count 1 --enable-addons monitoring --enable-managed-identity --service-cidr 10.0.10.0/23 --dns-service-ip 10.0.10.10
 
+# set this to the name of your Azure Container Registry.  It must be globally unique
+MYACR=workloadContainerRegistry
+# Run the following line to create an Azure Container Registry if you do not already have one
+az acr create -n $MYACR -g $RG_NAME --sku basic
+REGISTRYID=$(az acr show --name $MYACR -g $RG_NAME --query id -o tsv)
+
+
+# Retrieve your IP address
+CURRENT_IP=$(dig @resolver1.opendns.com ANY myip.opendns.com +short)
+
 # Create the AKS cluster
 # OutboundType should be defined and strictly be UserDefinedRouting 
 # As we are deploying to an existing subnet (this is a prerequisite for UDR outbound), the subnetId needs to be mentioned
@@ -99,16 +113,18 @@ az aks create -g $RG_NAME -n $CLUSTER_NAME -l $RG_LOCATION \
   --docker-bridge-address 172.17.0.1/16 \
   --vnet-subnet-id $SUBNETID \
   --enable-managed-identity \
-  --api-server-authorized-ip-ranges $FWPUBLIC_IP \
+  --api-server-authorized-ip-ranges $FWPUBLIC_IP,$CURRENT_IP/32 \
   --enable-aad  \
   --enable-azure-rbac \
-  --enable-addons monitoring
+  --enable-addons monitoring \
+  --attach-acr $REGISTRYID
 
-# Retrieve your IP address
-CURRENT_IP=$(dig @resolver1.opendns.com ANY myip.opendns.com +short)
+
 # Add to AKS approved list
-az aks update -g $RG_NAME -n $CLUSTER_NAME --api-server-authorized-ip-ranges $CURRENT_IP/32
+# az aks update -g $RG_NAME -n $CLUSTER_NAME --api-server-authorized-ip-ranges $CURRENT_IP/32
 
+# Reference
+# az aks create -g MyResourceGroup -n MyManagedCluster --api-server-authorized-ip-ranges 193.168.1.0/24,194.168.1.0/24,195.168.1.0
 
 #############################################
 # AAD-Pod_Identity & SecretsStoreCSIDriver Section
@@ -118,7 +134,7 @@ az aks update -g $RG_NAME -n $CLUSTER_NAME --api-server-authorized-ip-ranges $CU
 # for this demo, we will be deploying a user-assigned identity to the AKS node resource group
 export IDENTITY_RESOURCE_GROUP="$(az aks show -g ${RG_NAME} -n ${CLUSTER_NAME} --query nodeResourceGroup -otsv)"
 
-BASE_VNET_ID=$(az network vnet show -g $RG_NAME -n BaseVnet --query id -o tsv)
+#BASE_VNET_ID=$(az network vnet show -g $RG_NAME -n BaseVnet --query id -o tsv)
 
 # get the client-Id of the managed identity assigned to the node pool
 AGENTPOOL_IDENTITY_CLIENTID=$(az aks show -g $RG_NAME -n $CLUSTER_NAME --query identityProfile.kubeletidentity.clientId -o tsv)
@@ -128,7 +144,11 @@ AGENTPOOL_IDENTITY_CLIENTID=$(az aks show -g $RG_NAME -n $CLUSTER_NAME --query i
 # ""before deploying AAD Pod Identity"" so that it can assign and un-assign identities from the underlying VM/VMSS.
 az role assignment create --role "Managed Identity Operator" --assignee $AGENTPOOL_IDENTITY_CLIENTID --scope /subscriptions/${SUBSCRIPTION_ID}/resourcegroups/${IDENTITY_RESOURCE_GROUP}
 az role assignment create --role "Virtual Machine Contributor" --assignee $AGENTPOOL_IDENTITY_CLIENTID --scope /subscriptions/${SUBSCRIPTION_ID}/resourcegroups/${IDENTITY_RESOURCE_GROUP}
-az role assignment create --role "AcrPull" --assignee $AGENTPOOL_IDENTITY_CLIENTID --scope /subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RG_NAME}/providers/Microsoft.ContainerRegistry/registries/$MYACR
+
+# The --attach-acr switch in the cluster creation command takes care of this specific role assignment
+# az role assignment create --role "AcrPull" --assignee $AGENTPOOL_IDENTITY_CLIENTID --scope /subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RG_NAME}/providers/Microsoft.ContainerRegistry/registries/$MYACR
+
+
 # get the cluster access credentials before executing the K8s API commands
 # Note: the --admin switch is optional and not adviced for production setups
 az aks get-credentials -n $CLUSTER_NAME -g $RG_NAME --admin
@@ -139,8 +159,19 @@ kubectl apply -f PodIdentityManifests/deployment-rbac.yaml
 kubectl apply -f PodIdentityManifests/mic-exception.yaml
 
 #Deploy Azure Key Vault Provider for Secrets Store CSI Driver
+# Todo- check if this repo URL is covered by the whitelisted FDQNs in Firewall Application Rules
 helm repo add csi-secrets-store-provider-azure https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
 helm install csi csi-secrets-store-provider-azure/csi-secrets-store-provider-azure
+
+###################(OR)###############################
+# Reference: https://secrets-store-csi-driver.sigs.k8s.io/getting-started/installation.html
+
+kubectl apply -f SecretStoreCSIDriverManifests/rbac-secretproviderclass.yaml
+kubectl apply -f SecretStoreCSIDriverManifests/csidriver.yaml
+kubectl apply -f SecretStoreCSIDriverManifests/secrets-store.csi.x-k8s.io_secretproviderclasses.yaml
+kubectl apply -f SecretStoreCSIDriverManifests/secrets-store.csi.x-k8s.io_secretproviderclasspodstatuses.yaml
+kubectl apply -f SecretStoreCSIDriverManifests/secrets-store-csi-driver.yaml
+
 
 # Create the managed (user-assigned) identity that will be assigned to the pods (in a specific namespace if required) to authenticate with AAD and access azure resources 
 az identity create -g ${IDENTITY_RESOURCE_GROUP} -n ${IDENTITY_NAME}
@@ -202,16 +233,9 @@ spec:
     tenantId: $TENANT_ID                # the tenant ID of the KeyVault
 EOF
 
-# set this to the name of your Azure Container Registry.  It must be globally unique
-MYACR=workloadContainerRegistry
 
-# Run the following line to create an Azure Container Registry if you do not already have one
-az acr create -n $MYACR -g $RG_NAME --sku basic
 
-REGISTRYID=$(az acr show --name workloadcontainerregistry -g $RG_NAME --query id -o tsv)
 
-# Create an AKS cluster with ACR integration
-az aks update -n $CLUSTER_NAME -g $RG_NAME --attach-acr $MYACR
 
 # login to the azure account to access the ACR
 az acr login --name $MYACR
@@ -256,15 +280,34 @@ EOF
 ## show secrets held in secrets-store
 kubectl exec workload-egresstest -- ls /mnt/secrets-store/
 
-# Copy the certificate file from the mount directory to the CA Certs folder
-kubectl exec workload-egresstest -- /bin/bash
+# Check if the mounted share/directory lists the rootCA.pem file
+kubectl exec ubuntu-deployment-858dd67f58-c5r8t -- ls /mnt/azure/
+# Update the package lists and install curl- this is needed to test the egress from the app pod with TLS inspection enabled
+kubectl exec ubuntu-deployment-858dd67f58-c5r8t -- apt-get update
+kubectl exec ubuntu-deployment-858dd67f58-c5r8t -- apt-get -y install curl
+# The certificates will have to be converted to .crt. This is a prerequisite. Only .crt files will be considered for installation
+kubectl exec ubuntu-deployment-858dd67f58-c5r8t -- openssl x509 -in /mnt/azure/rootCA.pem -inform PEM -
+out /usr/share/ca-certificates/rootCA.crt
+# The certificate is copied to an additonal location. The commands seem to not produce the same results everytime when using the path suggested in the documentation
+# i.e. /usr/share/ca-certificates/
+kubectl exec ubuntu-deployment-858dd67f58-c5r8t -- cp /usr/share/ca-certificates/rootCA.crt /usr/local/share/ca-certificates/rootCA.crt
+# check for all the newly added CA certificates in /etc/ca-certificates.conf
+kubectl exec ubuntu-deployment-858dd67f58-c5r8t -- dpkg-reconfigure ca-certificates
+# this will use the /etc/ca-certificates.conf and install the valid certs and update the same in /etc/ssl/cert
+kubectl exec ubuntu-deployment-858dd67f58-c5r8t -- update-ca-certificates
 
-# > apt-get -y install curl
-# > apt-get -y install openssl
-# > apt-get -y install dpkg
-# > apt-get -y install ca-certificates
-# > mkdir /usr/local/share/ca-certificates/extra
-# > kubectl exec workload-egresstest -- openssl x509 -in /mnt/secrets-store/SelfSignedRootCACert -inform PEM -out /usr/local/share/ca-certificates/extra/SelfSignedRootCACert.crt
-# > sudo dpkg-reconfigure ca-certificates
-# > sudo update-ca-certificates
+# final test to check the egress payload for the URL (TLS inspection at the firewall)
+kubectl exec ubuntu-deployment-858dd67f58-c5r8t -- curl -v https://dataservice.accuweather.com/locations/v1/cities/search?apikey=lOpevOZZZyazIsPaGb32UEDMLRTHxy0T&q=Chennai&language=en-us&details=false
 
+# quick Log Analytics query to get the requests that are TLS inspected by the firewall- https://github.com/MicrosoftDocs/azure-docs/blob/main/articles/firewall/premium-deploy-certificates-enterprise-ca.md#validate-tls-inspection
+#AzureDiagnostics 
+#| where ResourceType == "AZUREFIREWALLS" 
+#| where Category == "AzureFirewallApplicationRule" 
+#| where msg_s contains "Url:" 
+#| sort by TimeGenerated desc
+
+
+>az acr login --name workloadcontainerregistry
+>docker tag dotnetapp:testv1 workloadcontainerregistry.azurecr.io/dotnetconsoleapp:v1.2
+>docker push workloadcontainerregistry.azurecr.io/dotnetconsoleapp:v1.2
+>docker run --rm workloadcontainerregistry.azurecr.io/dotnetconsoleapp:v1.2

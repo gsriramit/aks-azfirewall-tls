@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ubuntu-deployment
+  labels:
+    app: ubuntu-deployment    
+    aadpodidbinding: podidentity    # Set the label value to the selector defined in AzureIdentityBinding
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: curlpod
+  template:
+    metadata:
+      labels:
+        app: curlpod
+    spec:
+      containers:
+      - name: workload-egress
+        command:
+        - sh
+        - -c
+        - while true; do sleep 1; done
+        image: ubuntu                       # This is is supposed to install the minimal version of ubuntu
+        volumeMounts:
+         - name: azure
+           mountPath: /mnt/azure
+      volumes:
+      - name: azure
+        csi:
+          driver: file.csi.azure.com
+          volumeAttributes:
+            secretName: storage-secret
+            shareName: fwtlscertshare
+

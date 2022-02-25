@@ -476,9 +476,12 @@ spec:
       containers:
       - name: nmi
         image: "mcr.microsoft.com/oss/azure/aad-pod-identity/nmi:v1.8.7"
+        ports:
+          - containerPort: 8081
+            hostPort: 8081
         args:
           - "--node=$(NODE_NAME)"
-          - "--http-probe-port=8086"
+          - "--http-probe-port=8081"
           - "--enableScaleFeatures=true"
           - "--metadata-header-required=true"
         env:
@@ -511,13 +514,7 @@ spec:
           name: iptableslock
         - name: kubelet-config
           mountPath: /etc/default/kubelet
-          readOnly: true
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 8086
-          initialDelaySeconds: 10
-          periodSeconds: 5
+          readOnly: true        
       nodeSelector:
         kubernetes.io/os: linux
 ---

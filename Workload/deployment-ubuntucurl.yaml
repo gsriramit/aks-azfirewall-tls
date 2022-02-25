@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ubuntu-deployment
+  labels:
+    app: ubuntu-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: curlpod
+  template:
+    metadata:
+      labels:
+        app: curlpod
+    spec:
+      containers:
+      - name: nginx
+        command:
+        - sh
+        - -c
+        - while true; do sleep 1; done
+        image: ubuntu
+
