@@ -4,11 +4,11 @@
 RG_LOCATION='eastus2'
 RG_NAME='rg-aksegressfirewalltest-dev0001'
 AZKEYVAULT_NAME='kv-azsecretstore-dev01'
-export SUBSCRIPTION_ID=""
+SUBSCRIPTION_ID=""
 CLUSTER_NAME="aksworkload-dev-01"
-export IDENTITY_NAME="podidentity"
-export KEYVAULT_NAME="kv-aks-secretstore"
-export TENANT_ID=""
+IDENTITY_NAME="podidentity"
+KEYVAULT_NAME="kv-aks-secretstore"
+TENANT_ID=""
 FWPUBLICIP_NAME="FirewallPublicIP"
 FWNAME="AKSFirewall"
 FWROUTE_NAME_INTERNET="aks-egress-fwinternet"
@@ -30,6 +30,9 @@ az group create -n $RG_NAME -l $RG_LOCATION
 # This deployment shd create the base virtual network, route table that creates a default egress route for 0/0 and a keyvault
 az deployment group create -g $RG_NAME -f BaseInfrastructure/deployBaseInfrastructure.json -p BaseInfrastructure/deployBaseInfrastructure.parameters.json
 
+
+######## Section- TLS Certificates Start ###############
+
 # Create the TLS Certificates that will be used by the workload pods and azure firewall during the TLS inspection process
 # Create root CA
 openssl req -x509 -new -nodes -newkey rsa:4096 -keyout rootCA.key -sha256 -days 1024 -out rootCA.crt -subj "/C=US/ST=US/O=Self Signed/CN=Self Signed Root CA" -config openssl.cnf -extensions rootCA_ext
@@ -46,20 +49,12 @@ openssl x509 -req -in interCA.csr -CA rootCA.crt -CAkey rootCA.key -CAcreateseri
 # https://www.openssl.org/docs/manmaster/man1/openssl-pkcs12.html
 # https://www.ibm.com/docs/en/spectrum-conductor/2.3.0?topic=groups-setting-up-ssl-tier-3-notebooks
 openssl pkcs12 -export -out interCA.pfx -inkey interCA.key -in interCA.crt -passout "pass:azfwintercapwd"
-#pass-fw-akstls-02:
-
-echo ""
-echo "================"
-echo "Successfully generated root and intermediate CA certificates"
-echo "   - rootCA.crt/rootCA.key - Root CA public certificate and private key"
-echo "   - interCA.crt/interCA.key - Intermediate CA public certificate and private key"
-echo "   - interCA.pfx - Intermediate CA pkcs12 package which could be uploaded to Key Vault"
-echo "================"
 
 # Create a secret (base64 encoded data) from the PFX of the intermediate CA
 export AZFIREWALL_TLS_INTERMEDIATECA_CERT_DATA=$(cat interCA.pfx | base64 | tr -d '\n')
 # Note: If executing through WSL or Cloud Shell, the logged-in user account needs to be given the secret add permissions to be able to execute the next step
 # If automation is used, the SP needs to be provided the appropriate permissions 
+
 # Add the intermediateCA certificate as a secret to the keyvault- this will be referred to by the firewall policy
 az keyvault secret set --name 'CACert' --vault-name $AZKEYVAULT_NAME --value $AZFIREWALL_TLS_INTERMEDIATECA_CERT_DATA
 # Import the root-CA certificate to the keyvault - this will be referred to by the SecretProviderClass
@@ -67,6 +62,10 @@ az keyvault secret set --name 'CACert' --vault-name $AZKEYVAULT_NAME --value $AZ
 cat rootCA.crt rootCA.key > rootCA.pem
 az keyvault certificate import --vault-name $AZKEYVAULT_NAME -f rootCA.pem --name 'SelfSignedRootCACert'
 
+######## Section- TLS Certificates End ###############
+
+
+######## Section- Firewall & AKS Deployment Start ###############
 # Deploy the Firewall that provides the egress security through TLS inspection
 az deployment group create -g $RG_NAME -f Firewall/deployAzureFirewall.json -p Firewall/deployAzureFirewall.parameters.json
 
@@ -76,11 +75,6 @@ FWPRIVATE_IP=$(az network firewall show -g $RG_NAME -n $FWNAME --query "ipConfig
 
 # Add the additional route that is a requisite of asymmetric routing soln
 az network route-table route create -g $RG_NAME --name $FWROUTE_NAME_INTERNET --route-table-name $FWROUTE_TABLE_NAME --address-prefix $FWPUBLIC_IP/32 --next-hop-type Internet
-
-# Map the route table to the cluster node subnet (aks-subnet)
-ROUTE_TABLE_ID=$(az network route-table show -g $RG_NAME -n $FWROUTE_TABLE_NAME --query id -o tsv)
-az network vnet subnet update -n 'aks-subnet' --vnet-name $VNET_NAME -g $RG_NAME --route-table $ROUTE_TABLE_ID
-
 
 # Deploy the AKS resource that will host the workload pods
 SUBNETID=$(az network vnet subnet show -g $RG_NAME --vnet-name $VNET_NAME --name 'aks-subnet' --query id -o tsv)
@@ -97,13 +91,15 @@ MYACR=workloadContainerRegistry
 az acr create -n $MYACR -g $RG_NAME --sku basic
 REGISTRYID=$(az acr show --name $MYACR -g $RG_NAME --query id -o tsv)
 
-
 # Retrieve your IP address
 CURRENT_IP=$(dig @resolver1.opendns.com ANY myip.opendns.com +short)
 
 # Create the AKS cluster
 # OutboundType should be defined and strictly be UserDefinedRouting 
 # As we are deploying to an existing subnet (this is a prerequisite for UDR outbound), the subnetId needs to be mentioned
+# enable-managed-identity lets Azure create the MIs. This lets us avoid the creation of SPs and Secrets
+# The Firewall's public IP need to be added to the API Server Authorized IPs, without this we will be unable to fetch the pod logs
+# attach-acr switch helps in integrating ACR with this cluster (removed the need to manually assign ACRPull role to the kubelet identity)
 az aks create -g $RG_NAME -n $CLUSTER_NAME -l $RG_LOCATION \
   --node-count 2 --generate-ssh-keys \
   --network-plugin $PLUGIN \
@@ -119,22 +115,19 @@ az aks create -g $RG_NAME -n $CLUSTER_NAME -l $RG_LOCATION \
   --enable-addons monitoring \
   --attach-acr $REGISTRYID
 
+  
+# get the cluster access credentials before executing the K8s API commands
+# Note: the --admin switch is optional and not adviced for production setups
+az aks get-credentials -n $CLUSTER_NAME -g $RG_NAME --admin
 
-# Add to AKS approved list
-# az aks update -g $RG_NAME -n $CLUSTER_NAME --api-server-authorized-ip-ranges $CURRENT_IP/32
-
-# Reference
-# az aks create -g MyResourceGroup -n MyManagedCluster --api-server-authorized-ip-ranges 193.168.1.0/24,194.168.1.0/24,195.168.1.0
+######## Section- Firewall & AKS Deployment End ###############
 
 #############################################
 # AAD-Pod_Identity & SecretsStoreCSIDriver Section
 #############################################
 
-
 # for this demo, we will be deploying a user-assigned identity to the AKS node resource group
 export IDENTITY_RESOURCE_GROUP="$(az aks show -g ${RG_NAME} -n ${CLUSTER_NAME} --query nodeResourceGroup -otsv)"
-
-#BASE_VNET_ID=$(az network vnet show -g $RG_NAME -n BaseVnet --query id -o tsv)
 
 # get the client-Id of the managed identity assigned to the node pool
 AGENTPOOL_IDENTITY_CLIENTID=$(az aks show -g $RG_NAME -n $CLUSTER_NAME --query identityProfile.kubeletidentity.clientId -o tsv)
@@ -148,22 +141,18 @@ az role assignment create --role "Virtual Machine Contributor" --assignee $AGENT
 # The --attach-acr switch in the cluster creation command takes care of this specific role assignment
 # az role assignment create --role "AcrPull" --assignee $AGENTPOOL_IDENTITY_CLIENTID --scope /subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RG_NAME}/providers/Microsoft.ContainerRegistry/registries/$MYACR
 
-
-# get the cluster access credentials before executing the K8s API commands
-# Note: the --admin switch is optional and not adviced for production setups
-az aks get-credentials -n $CLUSTER_NAME -g $RG_NAME --admin
-
 # The manifests are downlaoded from the azure github repo
 kubectl apply -f PodIdentityManifests/deployment-rbac.yaml
 # For AKS clusters, deploy the MIC and AKS add-on exception by running -
 kubectl apply -f PodIdentityManifests/mic-exception.yaml
 
-#Deploy Azure Key Vault Provider for Secrets Store CSI Driver
-# Todo- check if this repo URL is covered by the whitelisted FDQNs in Firewall Application Rules
+# Deploy Azure Key Vault Provider for Secrets Store CSI Driver
 helm repo add csi-secrets-store-provider-azure https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
 helm install csi csi-secrets-store-provider-azure/csi-secrets-store-provider-azure
 
 ###################(OR)###############################
+
+# Manual installation of the CSI Driver CRDs. The Helm installation seems to fail and yet to be investigated
 # Reference: https://secrets-store-csi-driver.sigs.k8s.io/getting-started/installation.html
 
 kubectl apply -f SecretStoreCSIDriverManifests/rbac-secretproviderclass.yaml
@@ -171,7 +160,6 @@ kubectl apply -f SecretStoreCSIDriverManifests/csidriver.yaml
 kubectl apply -f SecretStoreCSIDriverManifests/secrets-store.csi.x-k8s.io_secretproviderclasses.yaml
 kubectl apply -f SecretStoreCSIDriverManifests/secrets-store.csi.x-k8s.io_secretproviderclasspodstatuses.yaml
 kubectl apply -f SecretStoreCSIDriverManifests/secrets-store-csi-driver.yaml
-
 
 # Create the managed (user-assigned) identity that will be assigned to the pods (in a specific namespace if required) to authenticate with AAD and access azure resources 
 az identity create -g ${IDENTITY_RESOURCE_GROUP} -n ${IDENTITY_NAME}
