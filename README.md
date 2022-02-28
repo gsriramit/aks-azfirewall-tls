@@ -176,3 +176,18 @@ This section references the issues faced during the implementation of the soluti
 3. Use a spot node pool to save some on the underlying VMSS instances
    - Reference: https://docs.microsoft.com/en-us/azure/aks/spot-node-pool
 
+## Additional References
+1. TLS inspection of Azure Firewall Premium
+   - https://techcommunity.microsoft.com/t5/azure-network-security-blog/certificate-management-overview-for-azure-firewall-premium-tls/ba-p/2214763
+   - https://www.youtube.com/watch?v=A-hWyZZsFVY&ab_channel=MicrosoftSecurityCommunity
+2. Using Openssl to create self-signed certificates
+   - https://docs.microsoft.com/en-us/azure/firewall/premium-certificates#create-your-own-self-signed-ca-certificate
+3. Egress through Azure Firewall
+   - https://docs.microsoft.com/en-us/azure/architecture/example-scenario/aks-firewall/aks-firewall
+   - https://techcommunity.microsoft.com/t5/azure-network-security-blog/certificate-management-overview-for-azure-firewall-premium-tls/ba-p/2214763
+4. Installation of TLS certificates in Ubuntu & other Linux Distros
+   - 	https://askubuntu.com/questions/73287/how-do-i-install-a-root-certificate
+   - 	https://www.hs-schmalkalden.de/en/university/faculties/faculty-of-electrical-engineering/studium/use-of-it/install-ca-certificates-on-linux-systems.html
+5. Running a command after the creation of a container
+   - https://kubernetes.io/docs/tasks/inject-data-application/define-command-argument-container/
+
