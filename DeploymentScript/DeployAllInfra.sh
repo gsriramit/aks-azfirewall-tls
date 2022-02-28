@@ -287,15 +287,7 @@ kubectl exec ubuntu-deployment-858dd67f58-c5r8t -- update-ca-certificates
 # final test to check the egress payload for the URL (TLS inspection at the firewall)
 kubectl exec ubuntu-deployment-858dd67f58-c5r8t -- curl -v https://dataservice.accuweather.com/locations/v1/cities/search?apikey=lOpevOZZZyazIsPaGb32UEDMLRTHxy0T&q=Chennai&language=en-us&details=false
 
-# quick Log Analytics query to get the requests that are TLS inspected by the firewall- https://github.com/MicrosoftDocs/azure-docs/blob/main/articles/firewall/premium-deploy-certificates-enterprise-ca.md#validate-tls-inspection
-#AzureDiagnostics 
-#| where ResourceType == "AZUREFIREWALLS" 
-#| where Category == "AzureFirewallApplicationRule" 
-#| where msg_s contains "Url:" 
-#| sort by TimeGenerated desc
 
 
->az acr login --name workloadcontainerregistry
->docker tag dotnetapp:testv1 workloadcontainerregistry.azurecr.io/dotnetconsoleapp:v1.2
->docker push workloadcontainerregistry.azurecr.io/dotnetconsoleapp:v1.2
->docker run --rm workloadcontainerregistry.azurecr.io/dotnetconsoleapp:v1.2
+
+
