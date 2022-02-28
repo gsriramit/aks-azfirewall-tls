@@ -107,4 +107,31 @@ kubectl exec ubuntu-deployment-858dd67f58-c5r8t -- update-ca-certificates
 1. In real time scenarios, these steps should be implemented as "commands" in the container after the container creation completes. The manual process provided here is just to illustrate and explain the individual steps 
 2. It is also important to note that these steps (in majority of the cases) cannot be included as a part of the image building process in the dockerfile as the certificate has to be read securely from the keyvault 
 
+## Powershell Commands to setup the AzureFileShare for Certificate Access
+Note: This method was used because, the keyvault access from the pods failed with a connection refused error. This is captured in the "Issues&Troubleshooting" section. These were extracted from this [blog post](https://zimmergren.net/mount-an-azure-storage-file-share-to-deployments-in-azure-kubernetes-services-aks/) by Tobias
+```
+$accountName = "stacacertshare"        
+$accountNameBytes = [System.Text.Encoding]::UTF8.GetBytes($accountName)
+$accountNameBase64 = [Convert]::ToBase64String($accountNameBytes)
+Write-Host "Account Name Base 64: " $accountNameBase64
+  
+$accountKey ="MiC7ql0Xycix7Tmk1CB0vLJPlHmWJWAnl48kZ59xynifKLULS4x59l6ZdqmUr1SchpWjAQgelvESfsFKmH+k7w=="
+$accountKeyBytes = [System.Text.Encoding]::UTF8.GetBytes($accountKey)
+$accountKeyBase64 = [Convert]::ToBase64String($accountKeyBytes)
+Write-Host "Account Name Key 64: " $accountKeyBase64
 
+```
+
+## SSH into the pods for troubleshooting
+Reference: https://docs.microsoft.com/en-us/azure/aks/ssh
+```
+srvadmin@DESKTOP-LP3ON48:/mnt/c/DevApplications/KubernetesPlayground/aks-azfirewall-tls$ kubectl debug node/aks-nodepool1-30698835-vmss000000 -it --image=mcr.microsoft.com/a
+ks/fundamental/base-ubuntu:v0.0.11
+Creating debugging pod node-debugger-aks-nodepool1-30698835-vmss000000-trdzm with container debugger on node aks-nodepool1-30698835-vmss000000.
+If you don't see a command prompt, try pressing enter.
+root@aks-nodepool1-30698835-vmss000000:/# hostname --fqdn
+aks-nodepool1-30698835-vmss000000.ulldf05wqgzuxd3hrtwrzok3xf.cx.internal.cloudapp.net
+```
+
+## Output Dump
+Logs from the execution of commands during the setup of this solution - [Outputdump-documented](Outputdump.md)
