@@ -151,12 +151,28 @@ Logs from the execution of commands during the setup of this solution - [Outputd
    | where msg_s contains "Url:" 
    | sort by TimeGenerated desc)
    ```
-## Issues & Troubleshooting
+## Open Issues 
 This section references the issues faced during the implementation of the solution
 1. [Access to secrets store fails- Connection refused](Issues&Troubleshooting/KeyvaultAccess.md)
    - Issue opened in Azure-AKS Github page - https://github.com/Azure/AKS/issues/2812#issuecomment-1053532726
 2. [Liveness Probes of NMI pods fail- Connection refused ](Issues&troubleshooting/NMILivenessProbeFailure.md)
 
+## Open Items (ToDO)
+1. Not all firewall rules listed in this documentation are added to the arm template (deployment or parameters file). Many of the rules were added through the portal during troubleshooting the issues as and when they surfaced. 
+2. Fix the open issues (specified in the Open Issues section )
 
-   
-   
+## Cost-Saving Measures
+1. Azure Firewall Premium can make a serious dent in your monthly credits if you let it running continuously for a day or 2. Use the following commands to deallocate the firewall
+   ```
+   Set-AzContext -Subscription <SubscriptionId>
+   $azfw = Get-AzFirewall -Name "AKSFirewall" -ResourceGroupName "rg-aksegressfirewalltest-dev0001"
+   $azfw.Deallocate()
+   Set-AzFirewall -AzureFirewall $azfw
+   ```
+2. Stop the AKS cluster when not used
+   ```
+   az aks stop --name <ClusterName> --resource-group <rgName>
+   ```
+3. Use a spot node pool to save some on the underlying VMSS instances
+   - Reference: https://docs.microsoft.com/en-us/azure/aks/spot-node-pool
+
