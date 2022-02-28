@@ -223,18 +223,6 @@ EOF
 
 
 
-
-
-# login to the azure account to access the ACR
-az acr login --name $MYACR
-
-# tag the prebuilt image from Microsoft MCR
-docker tag mcr.microsoft.com/dotnet/samples workloadcontainerregistry.azurecr.io/dotnetconsoleapp:v1
-# push the container image to ACR
-docker push workloadcontainerregistry.azurecr.io/dotnetconsoleapp:v1
-
-
-
 #spotify/alpine - if you prefer alpine as the base image, then this image contains bash and curl built on top of alpine
 # Deploy a sample workload that uses pod-identity and creates a secret volume mount request
 cat <<EOF | kubectl apply -f -
@@ -263,6 +251,40 @@ spec:
         volumeAttributes:
           secretProviderClass: "class-firewallrootca-cert"
 EOF
+
+############# Important - Alternate Method to circumvent an open issue ###################################
+###################################### Section- Azure File Share for Certificate Access ###########################################
+## Note: This method is adopted as a **stop-gap arrangement** due to the unaddressed issue in accessing keyvault to fetch the certificate
+
+# Create a storage account
+STORAGEACCTNAME="stacacertshare"
+STORAGEACCTSKU="Standard_LRS"
+STORAGEFILESHARENAME="fwtlscertshare"
+az storage account create -n $STORAGEACCTNAME -g $RG_NAME -l $RG_LOCATION --sku $STORAGEACCTSKU
+# Create a file share that will hold the certificate and be mounted a volume on the workload pods
+az storage share create --account-name $STORAGEACCTNAME --name $STORAGEFILESHARENAME
+# Upload the rootCA certificate to the share using portal or CLI command (rootCA.pem)
+# Modify the path of the file if you have the certs generated and stored in a dedicated folder
+az storage file upload -s $STORAGEFILESHARENAME --source rootCA.pem
+
+# Generate the base64 encoded string values of the storage account name and the key (as detailed in the readme.md file)
+# The CLI commands can also be used instead of PS commands
+# Fill this with the primary key of the storage account
+STORAGEACCTKEY=""   
+STORAGEACCTENCODEDDATA=$(echo -n $STORAGEACCTNAME | base64 )
+STORAGEACCTKEYENCODEDDATA=$(echo -n $STORAGEACCTKEY | base64 )
+
+# The Yq tool can be used to update "azurestorageaccountname" and "azurestorageaccountkey" values in filesharesecret.yaml. This is manually for now
+# Apply the manifest to create a kubernetes secret
+kubectl apply -f CertificateShareManifests/filesharesecret.yaml
+
+# Create the workload
+# Note: The manifest still assigns the created pod-identity to the pods. The same can be used to complete auth with AAD from actual apps from within the code (.net core or likewise)
+# The above mentioned exercise is left to the users of this repo
+kubectl apply -f Workload/deployment-curl-certshare.yaml
+#################################### Section- Azure File Share for Certificate Access - End ####################################
+
+
 
 # Testing of the AAD-Pod-Identity & KeyVault Secret Store
 ## show secrets held in secrets-store
