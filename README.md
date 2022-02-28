@@ -135,3 +135,28 @@ aks-nodepool1-30698835-vmss000000.ulldf05wqgzuxd3hrtwrzok3xf.cx.internal.cloudap
 
 ## Output Dump
 Logs from the execution of commands during the setup of this solution - [Outputdump-documented](Outputdump.md)
+
+## Testing
+1. Use kubectl to execute a command on the pod. This can be as simple as a curl to an allowed or a blocked url
+   - The tests can be futher be expanded to allow specific resources in a website, assuming the necessary allow and deny rule preferences are configured in the firewall
+     - Allow data.service.accuweather.com/search but deny dataservice.accuweather.com/forecasts
+2. Application rule logs & Azure Diagnostics logs queries in Log-Analytics
+   - Note: Diagnostics logs has to be enabled for Azure Firewall and Log-Analytics has to be chosen as a target sink before the tests are run
+   - Log Analytics has built-in queries to query the Application and Network rule logs
+   ```
+   # quick Log Analytics query to get the requests that are TLS inspected by the firewall- https://github.com/MicrosoftDocs/azure-docs/blob/main/articles/firewall/premium-deploy-certificates-enterprise-ca.md#validate-tls-inspection
+   AzureDiagnostics 
+   | where ResourceType == "AZUREFIREWALLS" 
+   | where Category == "AzureFirewallApplicationRule" 
+   | where msg_s contains "Url:" 
+   | sort by TimeGenerated desc)
+   ```
+## Issues & Troubleshooting
+This section references the issues faced during the implementation of the solution
+1. [Access to secrets store fails- Connection refused](Issues&Troubleshooting/KeyvaultAccess.md)
+   - Issue opened in Azure-AKS Github page - https://github.com/Azure/AKS/issues/2812#issuecomment-1053532726
+2. [Liveness Probes of NMI pods fail- Connection refused ](Issues&troubleshooting/NMILivenessProbeFailure.md)
+
+
+   
+   
