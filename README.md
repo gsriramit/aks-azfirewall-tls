@@ -156,6 +156,7 @@ This section references the issues faced during the implementation of the soluti
 1. [Access to secrets store fails- Connection refused](Issues&Troubleshooting/KeyvaultAccess.md)
    - Issue opened in Azure-AKS Github page - https://github.com/Azure/AKS/issues/2812#issuecomment-1053532726
 2. [Liveness Probes of NMI pods fail- Connection refused ](Issues&troubleshooting/NMILivenessProbeFailure.md)
+   - For now, the NMI manifest has been modified to not include the livenessprobe. The pods get into a CrashLoopBackoff state after a minimum of 5 restarts. Kubelet treats each liveness probe failure as an error and tries to reboot. This would be a show-stopper if the NMI and MIC pods arent running when using the pod-managed identity & CSI secrets store driver. For the workaround of using Azure File Share CSI, the NMI and MIC components are optional, unless the workload pods use the Managed Identity to access Azure Resources.
 
 ## Open Items (ToDO)
 1. Not all firewall rules listed in this documentation are added to the arm template (deployment or parameters file). Many of the rules were added through the portal during troubleshooting the issues as and when they surfaced. 
