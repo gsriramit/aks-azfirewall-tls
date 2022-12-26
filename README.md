@@ -15,7 +15,8 @@ Note: You can use the "Standard Walkthrough" exercises available in Azure GitHub
    - Reference: https://docs.microsoft.com/en-us/azure/aks/azure-files-volume#mount-file-share-as-an-inline-volume
 
 ## Architecture Diagram
-![AKS-Firewall-TLS](https://user-images.githubusercontent.com/13979783/155938120-3377df9f-f762-4992-8e67-be6605d5a23b.png)
+![Aks-Scenarios - Firewall-TLS](https://user-images.githubusercontent.com/13979783/209516736-5a2bcaca-113d-4471-ad4d-8d48c71494e0.png)
+
 
 ## Firewall Rules
 
